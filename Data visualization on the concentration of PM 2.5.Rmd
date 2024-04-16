@@ -1,0 +1,149 @@
+---
+title: "Data visualization on the concentration of PM 2.5"
+author: "Cheng-Hsiu Tsai"
+date: "2022-11-22"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+### Hi there! Welcome to my data visualization land. Today I will use the data about PM 2.5 to do the data exploration.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### 1) Import and Preprocess Data
+
+```{r}
+classes <- c("character","character","character","character","character","numeric","numeric","numeric","numeric","numeric","numeric","numeric")
+data99 <- read.csv(url("https://bit.ly/3c4AHbL"),header = TRUE, colClasses = classes)
+
+require(data.table) ## for fread()
+data12 <- fread("https://bit.ly/3nZicL2",header = TRUE, colClasses = classes)
+str(data12)
+```
+### Let's take a look at the data I imported:
+
+
+```{r}
+library(tidyverse)
+glimpse(data99)
+```
+```{r}
+head(data99,3)
+summary(summary(data99$Sample.Value))
+```
+
+### Seems like there are some missing data in PM 2.5 observations. We should do the research and find out the proportion of it:
+
+```{r}
+require(scales)
+percent(sum(is.na(data99$Sample.Value)) / length(data99$Sample.Value))
+```
+### Now, we are going to bind 2 years data together and do some data transformimg: 
+
+```{r, include = FALSE}
+library("lubridate")
+```
+```{r}
+pm <- rbind(data99,data12)
+library("lubridate")
+pm$year <- as.factor(year(ymd(pm$Date)))
+pm <- rename(pm,PM = Sample.Value)
+head(pm,3)
+```
+
+### I will sample the data and visualize it in boxplots:
+
+```{r}
+set.seed(2021)
+sam <- sample(1:nrow(pm), 1000)
+pm_sample <- pm[sam,]
+head(pm_sample,3)
+```
+
+```{r}
+require(ggplot2)
+x <- ggplot(pm_sample, aes(year,log2(PM)))
+x1 <- ggplot(pm_sample, aes(year, log2(PM), color = year)) +
+  geom_boxplot() +
+  theme(plot.title = element_text(hjust = 0)) +
+  labs(title = "Boxplt of PM values in 1999 and 2012",x = "Year",y = "log2 PM2.5") +
+  ylim(-2.5,6.25) +
+  theme_bw();x1
+```
+
+
+
+### As we can see in this chart, in terms of average, PM value in 2012 is lower than the value in 1999.
+### In 1999, it is centered between 2.945 and 4.177, whereas it is centered between 2.138 and 3.585 in 2012.
+### In 1999, it is spread out by the minimum value 0.848 and maximum vlaue 5.629. In 2012, the degree of the PM values which is spread out longer than before.
+### To sum up, most of the site in 2012 has lower PM values than in 1999. However, according to the variance, the degree of PM values dispersion is more obviously in 2012.
+
+
+
+### To find more insight of this data, the first task is to identify a monitor in New York State that has data in 1999 and 2012.
+
+
+```{r}
+data_sub <- unique(select(filter(pm,pm$State.Code == 36),State.Code,County.Code,Site.ID))
+head(data_sub,3)
+```
+
+```{r}
+data_sub$Site.Code <- paste(data_sub$County.Code,data_sub$Site.ID,sep = ".")
+head(data_sub,3)
+```
+
+### Because not all of the monitors are all operated in 1999 and 2012, I need to find the intersection of the sites (i.e., monitors) in between 1999 and 2012 which gives us the list of monitors in New York that operated both in 1999 and 2012.
+```{r}
+data_sub1 <- unique(select(filter(pm,pm$State.Code == 36),State.Code,County.Code,Site.ID,year))
+data_sub1$Site.Code <- paste(data_sub1$County.Code,data_sub1$Site.ID,sep = ".")
+data_sp <- split(data_sub1,data_sub1$year) 
+intersect(data_sp[[1]][5],data_sp[[2]][5])
+```
+### We observe that the list contains 10 monitors. Rather than choosing a monitor at random, it would make more sense to choose one that had the most observations.
+
+### Now I am going to identify the monitor in the original data (i.e., pm) that had the most data using mutate(), filter(), group_by(), summarize(), and arrange().
+```{r}
+data_temp <- mutate(pm,Site.Code = paste(County.Code,Site.ID,sep = "."))
+data_fil <- filter(data_temp,Site.Code == "001.0005" | Site.Code == "001.0012" | Site.Code == "005.0080" | Site.Code == "013.0011" | Site.Code == "029.0005" | Site.Code == "031.0003" | Site.Code == "063.2008" | Site.Code == "067.1015" | Site.Code == "085.0055" | Site.Code == "101.0003")
+data_rank <- group_by(data_fil,Site.Code) %>%
+  summarize(number_of_sites = n()) %>%
+  arrange(desc(number_of_sites));data_rank
+```
+
+### It seems that monitor 101.0003 had collected the most data in the U.S. (i.e., pm) during 1999 and 2012 (n = 527).
+
+### Therefore, I focus on this monitor which is just identified (State.Code = 36 & County.Code = 101 & Site.ID = 0003) and assign the subset data to an obj. called ‘pmsub’.
+```{r}
+pmsub <- subset(pm,State.Code == "36" & County.Code == "101" & Site.ID == "0003")
+head(pmsub,3)
+```
+
+```{r}
+pmsub$Date <- as.Date(ymd(pmsub$Date))
+pmsub$yday <- yday(pmsub$Date)
+head(pmsub,3)
+```
+### To visualize it, let's draw a scatter plot by mapping the year-day variable on the x-axis, PM2.5 level on the y-axis separately for 1999 and 2012.
+
+```{r}
+g <- ggplot(pmsub, aes(yday,PM))
+g1 <- g +
+  geom_point() +
+  labs(x = "Day of the Year") +
+  facet_grid(. ~year) + 
+  theme_bw();g1
+```
+
+### Due to this result, we can know that the concentration of PM 2.5 has been decrease within 13 years.
+
+### That's all my observation. See you next time!
+
+
+
+
+
+
+

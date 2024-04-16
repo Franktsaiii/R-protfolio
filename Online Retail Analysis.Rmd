@@ -1,0 +1,236 @@
+---
+title: "Online Retail Analysis"
+author: "Cheng-Hsiu Tsai"
+date: "2023-01-11"
+output: html_document
+---
+### Hi there! Welcome to my data visualization land. Today I will use the data set which is very classic containing all the transactions occurring between 12/01/2010 and 12/09/2011 for a UK-based and registered non-store online retail.
+### let's see what we can find in it!
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Import and Examine the Data
+
+```{r}
+require(data.table)
+data1 <- data.table::fread("C:/R-language/PBA/onlineRetail.csv")
+require(tidyverse)
+glimpse(data1)
+summary(data1)
+head(data1,10)
+```
+
+
+```{r}
+cat("the unique number of customers:",length(unique(data1$CustomerID)))
+cat("\nthe unique number of products purchased:",length(unique(data1$StockCode)))
+cat("\nthe unique number of transactions:",length(unique(data1$InvoiceNo)))
+```
+```{r}
+#Drop the value that Quantity or Unit Price are lower than 0.
+data1 <- data1[data1$Quantity>=0];data1 <- data1[data1$UnitPrice>=0]
+data1$CustomerID <- as.character(data1$CustomerID)
+#Drop the InvoiceNo. which contains the letter "C"(but including NA value).
+data2 <- subset(data1,grepl("C",data1$InvoiceNo) != TRUE)
+```
+
+## RFM Variables
+### RFM model is so popular to analyze the commerce performance. I will convert the InvoiceDate into a date obj. then create a variable called Recency by computing the number of days until the last day of purchase in the dataset since last purchase for each customer.
+```{r}
+require(lubridate)
+data2$InvoiceDate <- mdy_hm(data2$InvoiceDate)
+data2$InvoiceDate <- as.Date(data2$InvoiceDate)      
+class(data2$InvoiceDate)
+#create variable called Amount for analysis use.
+data2$Amount <- data2$Quantity * data2$UnitPrice
+#create another data set and drop the value of CustomerID which is NA.
+dataT <- data2
+dataT <- dataT[!is.na(dataT$CustomerID)]
+#create Recency
+dataT <- dataT[order(-dataT$InvoiceDate),]
+dataT <- dataT[!duplicated(dataT$CustomerID),]
+dataT <- dataT[order(dataT$CustomerID),]
+last_day <- "2011-12-09"
+dataT$Recency <- ymd(last_day) - dataT$InvoiceDate
+```
+### Then I create a variable called Frequency and Monetary for each customer in the data.
+```{r}
+#frequency
+data2 <- data2[order(data2$CustomerID)]
+dataT <- cbind(dataT, Frequency = with(data2,
+  as.numeric(by(InvoiceNo, CustomerID, function(x) length(unique(x))))))
+#Monetary value
+dataT <- cbind(dataT, Monetary = with(data2,
+  as.numeric(by(Amount, CustomerID, function(x) sum(x)))))
+head(dataT,5)
+```
+
+### After finish the pre-processing, let's visualize the RFM variables with box plots:
+```{r}
+par(mfrow = c(1,3))
+#boxplot(dataT$Recency,dataT$Frequency,dataT$Monetary,names = c("Recency","Frequency","Monetary"))
+boxplot(dataT$Recency,xlab = "Recency")
+boxplot(dataT$Frequency,xlab = "Frequency")
+boxplot(dataT$Monetary,xlab = "Monetary")
+```
+
+### It seems that there are extreme values in the RFM variables. So, I remove these extreme values/outliers by keeping only the values that are within the 99th percentile.
+```{r}
+Rquan <- quantile(as.numeric(dataT$Recency),0.99)
+Fquan <- quantile(dataT$Frequency,0.99)
+Mquan <- quantile(dataT$Monetary,0.99)
+RFM <- subset(dataT,dataT$Recency <= Rquan & dataT$Frequency <= Fquan & dataT$Monetary <= Mquan)
+par(mfrow = c(1,3))
+boxplot(RFM$Recency,xlab = "Recency")
+boxplot(RFM$Frequency,xlab = "Frequency")
+boxplot(RFM$Monetary,xlab = "Monetary")
+```
+
+## Now I'm gonna scaling the Variables.
+
+### To prep the data for clustering, we will need to scale the features/variables. First, I create another data.table object called RFM_Scaled which contains the CustomerID and the standardized RFM variables.
+```{r}
+RFM_Scaled <- RFM[,c(7,10,11,12)]
+RFM_Scaled$Recency <- scale(RFM_Scaled$Recency,center = TRUE, scale = TRUE)
+RFM_Scaled$Frequency <- scale(RFM_Scaled$Frequency,center = TRUE, scale = TRUE)
+RFM_Scaled$Monetary <- scale(RFM_Scaled$Monetary,center = TRUE, scale = TRUE)
+head(RFM_Scaled,5)
+```
+
+### Second, I convert RFM_Scaled to a matrix. (also not forget to remove the CustomerID from the matrix.)
+```{r}
+RFM.mat <- as.matrix(RFM_Scaled[,-1])
+```
+### Third, I set seed at 2021 and run k-means clustering (set k = 4).
+```{r}
+set.seed(2021) # Set seed for reproducibility
+km.out <- kmeans(RFM.mat, centers = 4); km.out
+```
+### Then, I attach the cluster numbers (i.e., km.out$cluster) onto RFM_Scaled.
+```{r}
+require(dplyr)
+RFM_Scaled <- cbind(RFM_Scaled,km.out$cluster)
+RFM_Scaled <- RFM_Scaled %>%
+  rename(
+    cluster = V2
+  )
+RFM_new <- cbind(RFM,RFM_Scaled$cluster)
+RFM_new <- RFM_new %>%
+  rename(
+    cluster = V2
+  )
+```
+## Examining the Clusters
+###  After we have the cluster,do we observe any difference between the clusters which compute the average of RFM?
+```{r}
+group_by(RFM_new,cluster) %>%
+  summarise(Avg_R = mean(Recency),Avg_F = mean(Frequency),Avg_M = mean(Monetary))
+require(vtable)
+st(RFM_new, vars = c('Recency','Frequency','Monetary') ,group = 'cluster')
+```
+#### For the Average of RFM for each cluster:
+
+#### cluster1:The total customer is 999.The mean of Recency is 244.322. The mean of Frequency is 1.509.
+#### The mean of Monetary is 444.763.
+
+#### cluster2:The total customer is 999.The mean of Recency is 13.342. The mean of Frequency is 17.551.
+#### The mean of Monetary is 8826.556.
+
+#### cluster3:The total customer is 999.The mean of Recency is 49.244. The mean of Frequency is 2.413.
+#### The mean of Monetary is 754.051.
+
+#### cluster4:The total customer is 999.The mean of Recency is 27.714. The mean of Frequency is 7.946.
+#### The mean of Monetary is 3070.437.
+
+#### As cluster1, it had been long time that they did not come back shopping, and they spent the least from all cluster, so we can label them as "potentially lost customers".
+
+#### As cluster3, it had the most people in this cluster and their Monetary is not very high,so it might be the low-to-medium consumer groups. We can label them as "general customers".
+
+#### As cluster4, its monetary had three times larger than general customers, and did shopping 7 times in a period which is also more often than general customers. Hence, we can label them as "VIP customers".
+
+#### As cluster2, it had the least days about coming back to shop, the most times come to shop in a period, and the largest monetary by all the clusters. Since there are a few people in this cluster, we can label them as "high-level VIP customers".
+
+### In my opinion, cluster4,vip customers, would be the most suitable for us to run target marketing campaign, because they are regarded as a medium-to-high consumer groups, they may be able to pay more money on things that worth it but become hesitate by our service or other things.
+### Therefore, we can do some strategy such as:
+
+### 1.Promote a sense of superiority: giving them a special service like "private car delivery service" when deliver thier items.We hope this strategy can deliver their items immediately and let them be more willingness to make the order on our website.
+
+### l) Based on the list of top selling products, I try to develop my target marketing strategies. Therefore, I print out the top 5 most selling products in terms of sales revenue for each cluster.
+```{r}
+Customer_clus <- RFM_Scaled[,c(1,5)]
+Retail_clus <- left_join(data2,Customer_clus, by = c("CustomerID" = "CustomerID"))
+require(dplyr)
+cluster_sale <- Retail_clus %>%
+  na.omit() %>% 
+  select(InvoiceNo, StockCode, Description, Amount,CustomerID ,cluster) %>%
+  group_by(StockCode,Description ,cluster) %>%
+  summarise(Total_sales = sum(Amount),.groups = 'drop')
+```
+
+### cluster1 -> potentially lost customers
+```{r}
+subset(cluster_sale,cluster =="1") %>%
+  arrange(desc(Total_sales))%>%
+  head(5)
+```
+
+### cluster2 -> high-level VIP customers
+```{r}
+subset(cluster_sale,cluster =="2") %>%
+  arrange(desc(Total_sales))%>%
+  head(5)
+```
+
+### cluster3 -> general customers
+```{r}
+subset(cluster_sale,cluster =="3") %>%
+  arrange(desc(Total_sales))%>%
+  head(5)
+```
+
+### cluster4 -> VIP customers
+```{r}
+subset(cluster_sale,cluster =="4") %>%
+  arrange(desc(Total_sales))%>%
+  head(5)
+```
+### **seasonality**
+### I am interested in finding out if there is any seasonality (variation by month) in purchase frequency of the 5 top/best sellers. As a consequence, I compute purchase frequency of the top 5 selling products by month and visualize it using ggplot2.
+```{r}
+#View the top5 sellers firstly.
+onlineRetail <- Retail_clus %>%
+  select(InvoiceNo, StockCode, Description, InvoiceDate, Amount,CustomerID)
+onlineRetail %>%
+  group_by(StockCode,Description) %>%
+  summarise(Total_sales = sum(Amount),.groups = 'drop') %>%
+  arrange(desc(Total_sales)) %>%
+  head(6)
+
+Retail2 <- subset(onlineRetail, Description%in%c("REGENCY CAKESTAND 3 TIER","PAPER CRAFT , LITTLE BIRDIE","WHITE HANGING HEART T-LIGHT HOLDER","PARTY BUNTING","JUMBO BAG RED RETROSPOT"), select = c(InvoiceNo, StockCode, Description, InvoiceDate, Amount,CustomerID))
+Retail2$Invoice_month<-month(Retail2$InvoiceDate)
+Retail2$Decription<-as.character(Retail2$Description)
+
+ggplot(Retail2, aes(x=Invoice_month, y= length(InvoiceNo)))+ facet_wrap(~Description, ncol=2) + 
+  geom_bar(stat="identity") + 
+  labs(title = "Frequency by month", x = "Month", y = "Purchase Frequency")
+```
+
+### According to the bar chart above, we do observe some seasonality. Take 'PARTY BUNTING' as an example, we can obviously find that there is a peak in May, which is in spring, and sold not very well in winter.
+
+### On the previous part, I assume that the clusters are 4, and now I am going to check whether k = 4 is a reasonable decision using the Elbow/Silhouette method:
+```{r}
+factoextra::fviz_nbclust(RFM.mat, kmeans, method = "wss") +
+  geom_vline(xintercept = 3, linetype = 2) +
+  labs(subtitle = "Elbow method")
+factoextra::fviz_nbclust(RFM.mat, kmeans, method = "silhouette") +
+  labs(subtitle = "Silhouette method")
+```
+
+### According to the methods we utilized and the rule of thumb for them, we should say that it is not suitable for this data to divided to 4 clusters.
+
+### Instead, Due to the methods, k=3 will be a more reasonable decision for the number of clusters.
+
+### That's all my observation. See you next time!
+
+

@@ -1,0 +1,142 @@
+---
+title: "Discrimination analysis"
+author: "Cheng-Hsiu Tsai(111078517)"
+date: "2022-12-29"
+output: html_document
+---
+### Hi there! Welcome to my data visualization land. ^^  Today I will use the data to discuss whether there is discrimination against female employees in terms of salary.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Import and Preprocess Data
+```{r}
+data1 <- data.table::fread("C:/R-language/PBA/banksalary.csv")
+require(tidyverse)
+glimpse(data1)
+data1$Salary <- str_trim(data1$Salary, side = c("right"))
+data1$Salary <- gsub(c("[$]"),"",data1$Salary)
+data1$Salary <- gsub(c(","),"",data1$Salary)
+data1$Salary <- as.integer(data1$Salary)
+summary(data1)
+```
+
+### I want to find whether there is a significant difference in average salary between female employees and male employees.
+
+### We first assume that there is a equal in average salary between female and male employees.
+```{r}
+require(reshape2)
+require(data.table)
+shapiro.test(data1$Salary)
+data1[,shapiro.test(Salary),Gender] # match with normal distribution
+ansari.test(Salary ~ Gender, data1) #variance is not similar
+t.test(Salary ~ Gender, data = data1, var.equal = FALSE)
+dataSummary <- data1[,.(
+  Salary.mean=mean(Salary), Salary.sd=sd(Salary),
+  Lower=mean(Salary) - 2*sd(Salary)/sqrt(NROW(Salary)),
+  Upper=mean(Salary) + 2*sd(Salary)/sqrt(NROW(Salary))
+), Gender]; dataSummary
+ggplot(dataSummary, aes(x=Salary.mean, y=Gender)) + geom_point() +
+  geom_errorbarh(aes(xmin=Lower, xmax=Upper), height=.2) +
+  theme_bw()
+```
+
+### Viewing the number, the p-value of Two sample t-test is lower than 0.05, so we should reject the null hypothesis.
+
+### According to the chart, it is shown that **two means are not within 2 standard deviation of each other.** They are far apart from each other. 
+
+### As the results, **it is noticed that there is indeed a significant difference in average salary between female and male employees.**
+
+#### In addition to observe the relation between salary and gender, I also want to explore more. Therfore, I transform EducLev into several dummy variables. I also transform JobGrade, Gender, and PCJob into dummy variables.
+```{r}
+data2 <- data1
+data2$EducLev <- as.factor(data2$EducLev)
+data2$JobGrade <- as.factor(data2$JobGrade)
+data2$Gender <- factor(data2$Gender,levels = c(unique(data2$Gender)))
+data2$PCJob <- factor(data2$PCJob,levels = c(unique(data2$PCJob)))
+require(fastDummies)
+data_2 <- dummy_cols(data2,select_columns = c("Gender","EducLev","JobGrade","PCJob"))
+data_dum <- data_2[,c(-10,-12,-17,-23)];data_dum
+```
+
+### I estimate a multiple regression model to support previous justification.
+
+**original model**
+```{r}
+model1 <- lm(Salary ~ YrsExper+Age+YrsPrior+Gender_Female+EducLev_2+EducLev_3+EducLev_4+EducLev_5
+               +JobGrade_2+JobGrade_3+JobGrade_4+JobGrade_5+JobGrade_6+PCJob_Yes, data = data_dum)
+summary(model1)
+
+require(stargazer)
+stargazer(model1, type = "text")
+
+require(jtools) # install the package, "jtools", first!
+plot_summs(model1)
+```
+
+### We found that age has zero effect on the response variable. So, we use the scale function below:
+```{r}
+model2 <- lm(Salary ~ YrsExper+scale(Age)+YrsPrior+Gender+EducLev+
+               JobGrade+PCJob, data = data2)
+summary(model2)
+stargazer(model2, type = "text")
+plot_summs(model2)
+```
+
+### After done the multiple regression and viewing the coefficients, we can say that a variable is significant if their p-value is lower than 0.05, and then the t value will larger than 1.96.
+
+### Consequently,it is observed that **gender has an impact on Salary(p-value < 0.05), but education_level has no effect on Salary.** 
+
+### Therefore, we can maintain our original justification. Besides that, years_Experience, JobGrade and PCJob also have the great impact on Salary.
+
+### However, the second level of jobgrade does not affect Salary significantly. Last but not the least, JobGrade6, which is the highest level of jobgrade, has the largest effect on Salary. We can then view the R-squared, which means that the extent to which the RHS variables in the model explains the variation in Y, is 0.7652. Thus, **this model has quite convincing explanation.**
+
+
+
+## Just in case you have a question: Do these data provide evidence that there is discrimination against female employees in terms of salary?
+
+### As a result above, we can recognize that **there is indeed a significant difference in average salary between female and male employees during two sample t-test.**
+
+### In addition, after we considered other variables to check whether we have overestimated the impact between Gender and Salary,we found that other variables like YrsExper, PCJob positively affect Salary, but **Gender in female still has negatively effect on Salary. (as its p-value < 0.05, which means it is significant.)**
+
+### In a nutshell, I would tend to say that there is discrimination against female employees in terms of salary.
+
+
+### To find out sufficient provement to do the conclusion, I choose three variable(YrsExper,Gender,JobGrade) to be IV, and suppose they will have an impact on Salary.
+```{r}
+lm1 <- lm(Salary ~ YrsExper+Gender+JobGrade, data = data2)
+summary(lm1)
+```
+
+### Gender has an negative impact on Salary marginally when it becomes a female, as its p-value < 0.1.
+
+### But both of YrsExper and JobGrade has great impact on Salary, as their p-value far lower than 0.05.
+
+### **So I pick up Gender to be moderator and do the regression again.**
+```{r}
+data3 <- data2
+data3$JobGrade <- as.integer(data3$JobGrade)
+data3 <- dummy_cols(data3,select_columns = "Gender")
+data3 <- data3[,-10]
+salary1 <- lm(Salary ~ YrsExper+JobGrade,data = data3,subset=(Gender_Female==0))
+summary(salary1)
+salary2 <- lm(Salary ~ YrsExper+JobGrade,data = data3,subset=(Gender_Female==1))
+summary(salary2)
+```
+
+### Because two kinds of Gender has imapct on JobGrade, I will do the t-score to testify:
+```{r}
+(3627.35-3664.06) / sqrt(98.48^2+73.36^2)
+```
+
+### As a result, the impact of YrsExper for Male is stronger than Female. But Gender does not influence the impact of JobGrade on Salary.
+
+#### According to the result above all the question, besides that the mean of salary between male and female has a apparent difference, when we consider other variable like years-experience or job-grade, we can notice that those variable also have an impact on salary.
+
+#### When I assumed that gender in female will weaken the link between IVs which I chose and DV, surprisingly, **there is no difference regarding the impact of JobGrade on Salary between male and female.** 
+
+#### However, the impact of YrsExper for Male is stronger than Female, which means that **male tends to get higher salary than female when their years-of-experience is the same.**
+
+### In summary, I prefer to believe that **there is a discrimination against female regarding to salary.**
+
+### That's all my observation. See you next time!
